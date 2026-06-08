@@ -21,8 +21,6 @@ This issue is also well-suited as a learning vehicle because it's open-ended: th
 
 The CIRCT FSM dialect currently has no canonicalization or optimization passes. This tracking issue documents a set of patterns that should be implemented. The specific pattern highlighted is mutually exclusive transition elimination: when two transitions out of the same state have guard conditions that are logical complements of each other (i.e., one fires if and only if the other doesn't), the second transition's guard is redundant and can be dropped — making it an unconditional (default) fallthrough transition. The compiler currently emits both guards verbatim even when the redundancy is statically provable.
 
-[In your own words, what's broken or missing?]
-
 When the FSM optimizer detects that a state has two outgoing transitions whose guards are mutually exclusive and collectively exhaustive (they cover all possible input values with no overlap), the second transition should have its guard removed, becoming an unconditional fsm.transition. In the example from the issue, fsm_exit's guard — which is just NOT lt_reg.out — is provably redundant given that seq_1_while_if's guard is lt_reg.out. The rewritten IR should drop the comb.xor and fsm.return from that second transition block entirely.
 
 [What should happen?]
