@@ -1,39 +1,42 @@
 # su26-ai301-contribution
 Repo for AI301.
 
-# Contribution [#]: [Issue Title]
+# Contribution [#3577]: [[FSM] Tracking issue for canonicalization and optimization patterns]
 
 **Contribution Number:** [1 / 2 / 3]  
-**Student:** [Your Name]  
-**Issue:** [GitHub issue link]  
-**Status:** [Phase I / Phase II / Phase III / Phase IV] [In Progress / Complete]
+**Student:** Arefin Azam  
+**Issue:** [https://github.com/llvm/circt/issues/3577&sa=D&source=editors&ust=1780962362869744&usg=AOvVaw3yIuToiXmhxnAVDHxSBi6W](https://github.com/llvm/circt/issues/3577]
+**Status:** [Phase I Complete]
 
 ---
 
 ## Why I Chose This Issue
 
-[1-2 paragraphs explaining why this issue interests you, how it matches your skills/learning goals, what you hope to learn]
+My background in computer architecture and RTL design made this issue immediately recognizable — FSMs are one of the most fundamental building blocks in any sequential hardware design. Every control unit, protocol handler, or datapath sequencer I've written in Verilog or VHDL has relied on FSM patterns, so I have a strong intuition for what correct and optimized state machine behavior looks like. What drew me to this specific issue is that it asks me to think about FSM semantics at the compiler IR level rather than the HDL level, which is a perspective I want to develop. Identifying when a transition's guard condition is redundant given the guards of sibling transitions is exactly the kind of reasoning a synthesis tool does implicitly — being able to encode that as an explicit MLIR rewrite pattern is a new and interesting challenge for me.
+This issue is also well-suited as a learning vehicle because it's open-ended: the maintainers have laid out a problem statement and an example, but the actual pattern-matching logic and rewrite infrastructure are left to the contributor. I'll have to dig into MLIR's PatternRewriter API, understand how fsm.state, fsm.transition, and comb ops compose, and write proper lit tests. I'm hoping to leave this experience with a concrete understanding of how hardware compiler optimizations get implemented at the IR level, which directly complements what I already know at the RTL level.
 
 ---
 
 ## Understanding the Issue
 
-### Problem Description
+The CIRCT FSM dialect currently has no canonicalization or optimization passes. This tracking issue documents a set of patterns that should be implemented. The specific pattern highlighted is mutually exclusive transition elimination: when two transitions out of the same state have guard conditions that are logical complements of each other (i.e., one fires if and only if the other doesn't), the second transition's guard is redundant and can be dropped — making it an unconditional (default) fallthrough transition. The compiler currently emits both guards verbatim even when the redundancy is statically provable.
 
 [In your own words, what's broken or missing?]
 
-### Expected Behavior
+When the FSM optimizer detects that a state has two outgoing transitions whose guards are mutually exclusive and collectively exhaustive (they cover all possible input values with no overlap), the second transition should have its guard removed, becoming an unconditional fsm.transition. In the example from the issue, fsm_exit's guard — which is just NOT lt_reg.out — is provably redundant given that seq_1_while_if's guard is lt_reg.out. The rewritten IR should drop the comb.xor and fsm.return from that second transition block entirely.
 
 [What should happen?]
 
-### Current Behavior
+The FSM dialect emits both transition guards as-is, with no analysis of whether any guard is implied by the failure of a prior guard. In the example, the second transition computes comb.xor %lt_reg.out, %true (i.e., !lt_reg.out) and returns it as its guard condition — even though if the first transition's guard (lt_reg.out) failed, this second guard is guaranteed to be true. The redundant logic remains in the IR and propagates all the way to emitted SystemVerilog, producing unnecessary logic that a synthesis tool must redundantly simplify downstream.
 
 [What actually happens?]
 
-### Affected Components
+lib/Dialect/FSM/FSMOps.cpp — Where canonicalization patterns for FSM ops would be registered and implemented (canonicalizers attach to ops via getCanonicalizationPatterns or fold methods).
+include/circt/Dialect/FSM/FSMOps.td — TableGen op definitions for fsm.state, fsm.transition, and related ops; may need fold/canonicalize hooks added.
+lib/Dialect/Comb/ — The comb dialect (combinational logic ops like comb.xor) whose op patterns need to be matched to detect the complement relationship between guards.
+test/Dialect/FSM/ — Lit test directory where new canonicalization test cases (like the mutually exclusive transition example in the issue) need to be added.
 
 [Which parts of the codebase are involved?]
-
 ---
 
 ## Reproduction Process
