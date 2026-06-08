@@ -1,2 +1,2 @@
 # su26-ai301-contribution
-Repo for AI301,
+Repo for AI301.
