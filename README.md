@@ -1,7 +1,7 @@
 # su26-ai301-contribution
 Repo for AI301.
 
-# Contribution [#3577]: [[FSM] Tracking issue for canonicalization and optimization patterns]
+# Contribution [#3577]: [FSM] Tracking issue for canonicalization and optimization patterns]
 
 **Contribution Number:** [1 / 2 / 3]  
 **Student:** Arefin Azam  
