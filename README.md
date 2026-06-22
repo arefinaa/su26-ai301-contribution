@@ -8,7 +8,7 @@ Repo for AI301.
 **Issue:** [https://github.com/llvm/circt/issues/3577](https://github.com/llvm/circt/issues/3577)  
 **Fork:** [https://github.com/arefinaa/circt](https://github.com/arefinaa/circt)  
 **Working Branch:** [`fix-issue-3577`](https://github.com/arefinaa/circt/tree/fix-issue-3577)  
-**Status:** Phase II Complete
+**Status:** Phase III Complete
 
 ---
 
@@ -255,17 +255,21 @@ Reproduction baseline already committed (`66c8a29f0`).
 **Review:** Self-review checklist against CIRCT/LLVM conventions
 (`docs/GettingStarted.md` → "Submitting changes", `docs/DeveloperPolicy.md`,
 `docs/AIToolPolicy.md`):
-- [ ] Run `clang-format` (LLVM style) on changed files; `git clang-format
-      origin/main`.
-- [ ] Follow LLVM Coding Standards (naming, `cast<>`/`dyn_cast<>` usage, no raw
-      `new` where rewriter APIs exist).
-- [ ] Keep the patch small and incremental (LLVM "incremental development");
-      scope v1 to the two-transition complement case only.
+- [x] Code written to LLVM style (≤80 columns, `auto` with `dyn_cast`-style
+      `getDefiningOp<T>()`, doc comments on helpers). `clang-format` itself is
+      **not installed locally**, so a `git clang-format origin/main` pass is
+      still owed and will run in CI / before final PR submission.
+- [x] Follow LLVM Coding Standards (naming, `getDefiningOp<>()` usage, rewriter
+      APIs instead of raw `new`/manual erase).
+- [x] Keep the patch small and incremental — v1 is scoped to the
+      two-transition complement case only.
 - [ ] `ninja check-circt` passes (especially `test/Dialect/FSM` and
-      `test/Conversion/CalyxToFSM`, which contain the real-world pattern).
+      `test/Conversion/CalyxToFSM`) — **pending a build**; no local toolchain
+      (see *Manual Testing*). To run in CI / a Linux build.
 - [ ] PR uses "Squash and Merge"; CC the FSM dialect code owners; reference
-      issue #3577 in the PR description.
-- [ ] Disclose AI tool assistance per `docs/AIToolPolicy.md`.
+      issue #3577 in the PR description — **pending PR submission**.
+- [x] Disclose AI tool assistance per `docs/AIToolPolicy.md` — every Phase III
+      commit carries the `Assisted-by: Claude Code:claude-opus-4-8` trailer.
 
 **Evaluate:** Build `circt-opt`, run `--canonicalize` on the reproduction file
 and confirm the `comb.xor`/`fsm.return` disappear and `@C` becomes
@@ -281,24 +285,30 @@ canonicalization cases go in `test/Dialect/FSM/canonicalize.mlir` with a
 `// RUN: circt-opt --canonicalize %s | FileCheck %s` header — matching the
 existing file.
 
-### Unit Tests (lit / FileCheck)
+All of the following were **implemented** in `test/Dialect/FSM/canonicalize.mlir`
+(commit `65d410f6f`):
 
-- [ ] **Positive — comb form:** two complementary transitions (`fsm.return
-      %cond` then `comb.xor %cond, %true`); assert with `// CHECK-NOT: comb.xor`
-      and that the second transition becomes unconditional (`// CHECK:
-      fsm.transition @C` with no `guard`).
-- [ ] **Positive — arith form:** same shape but the complement is
-      `arith.xori %cond, %true`; assert it is likewise simplified (covers the
-      issue's note that guards may be `comb` *or* `arith`).
-- [ ] **Negative — non-complementary guards:** two unrelated guards (e.g.
-      `%a` and `%b`) must be left **untouched** (`// CHECK: comb.xor` still
-      present) — guards against over-eager rewriting.
-- [ ] **Negative — three transitions:** a state with three guarded transitions
-      where the middle one is not the complement of the first must not be
-      collapsed — verifies the conservative two-transition scope.
-- [ ] **Idempotence:** running `--canonicalize` twice yields the same output
-      (no infinite rewrite loop, since the pattern returns `success()` and the
-      driver re-runs).
+- [x] **Positive — comb form:** two complementary transitions (`fsm.return
+      %cond` then `comb.xor %cond, %true`); asserts with `// CHECK-NOT: comb.xor`
+      that the redundant logic is gone and that the second transition becomes
+      unconditional (`// CHECK: fsm.transition @C` with no `guard`).
+- [x] **Positive — arith form:** same shape but the complement is
+      `arith.xori %cond, %true`; asserts it is likewise simplified
+      (`// CHECK-NOT: arith.xori`) — covers the issue's note that guards may be
+      `comb` *or* `arith`.
+- [x] **Negative — non-complementary guards:** the second guard is `!%b`, which
+      is *not* the complement of the first guard (`%a`); the transitions must be
+      left **untouched** (`// CHECK: comb.xor` still present) — guards against
+      over-eager rewriting and specifically exercises the
+      `combXor.getOperand(0) == b` operand check.
+- [x] **Negative — three transitions:** a state with three guarded transitions
+      (where `@C`'s guard *is* the complement of `@B`'s) must not be collapsed —
+      verifies the conservative *exactly-two-transition* scope.
+- [x] **Idempotence / termination:** because the lit test runs the greedy driver
+      to a fixpoint, an infinite rewrite loop would hang the test. The pattern
+      avoids this by only firing when the second guard is non-null; after the
+      rewrite that guard becomes null (the region is erased), so it cannot
+      re-fire.
 
 ### Integration Tests
 
@@ -311,12 +321,15 @@ existing file.
 
 ### Manual Testing
 
-Planned for Phase III (build required): run `circt-opt --canonicalize
-test/Dialect/FSM/mutex-transition-repro.mlir` before and after the fix and
-diff the output to visually confirm the redundant guard is gone. For Phase II,
-the reproduction was validated by **source analysis**: tracing that no existing
-pattern in `FSMOps.cpp` inspects sibling-guard relationships, and confirming the
-exact pattern is emitted by `CalyxToFSM` lowering (`lower-while.mlir`).
+The intended manual check is to run `circt-opt --canonicalize
+test/Dialect/FSM/mutex-transition-repro.mlir` and confirm the `comb.xor` /
+`hw.constant` disappear and `@C` collapses to an unconditional `fsm.transition
+@C`. **Honest status:** this machine has no local CIRCT/LLVM build toolchain
+installed (see *Reproduction Process* — `cmake`, `ninja`, a C++ compiler, and
+`circt-opt` are all absent), so the binary could not be run locally. Runtime
+confirmation therefore happens in CI / a Linux build, which is the smoother path
+for this project; the change is otherwise validated by close source analysis of
+the canonicalization driver semantics (see *Challenges Faced*).
 
 ---
 
@@ -341,32 +354,94 @@ exact pattern is emitted by `CalyxToFSM` lowering (`lower-while.mlir`).
   a multi-hour from-scratch compile; runtime verification is the first Phase III
   task.
 
+### Phase III Progress
+
+The plan was implemented exactly as scoped, in small increments:
+
+- **Detection helpers** (`lib/Dialect/FSM/FSMOps.cpp`):
+  - `getGuardValue(TransitionOp)` returns the i1 `Value` a guard returns, or a
+    null `Value` for an unconditional transition (factored out of the existing
+    guard-introspection idiom).
+  - `isComplementOf(Value a, Value b)` returns true when `a == !b`. It reuses
+    `comb::XorOp::isBinaryNot()` — which already existed in the Comb dialect and
+    precisely matches the `xor x, allones` shape — for the comb form, and matches
+    `arith::XOrIOp` against a constant `1` (`m_One`) for the arith form.
+- **Rewrite** (`StateOp::canonicalize`): when a state has *exactly two*
+  transitions whose guards are complements, the second guard region is erased
+  with `rewriter.eraseBlock`, collapsing it to an unconditional transition. This
+  was chosen over the "replace `fsm.return %x` with an operand-less
+  `fsm.return`" approach used by `TransitionOp::canonicalize` for the constant
+  case, because erasing the whole block also removes the now-dead `comb.xor` /
+  `hw.constant` in one step and yields a clean `fsm.transition @C` with no
+  residual `guard { }` region. The existing always-taken pruning runs afterward
+  unchanged.
+- **Build dependency** (`lib/Dialect/FSM/CMakeLists.txt`): added `CIRCTComb` to
+  `LINK_LIBS PUBLIC`. **Decision:** I chose to match `comb::XorOp` *by type*
+  (idiomatic, robust, and lets me reuse `isBinaryNot`) rather than matching by
+  operation-name string. This introduces no dependency cycle — `CIRCTComb`
+  depends only on `CIRCTHW`, which `CIRCTFSM` already links — so the layering is
+  clean. No new dependent-dialect registration is needed because the pattern
+  only *inspects and erases* existing comb ops; it never *creates* one.
+- **Tests:** added five lit/FileCheck cases (see *Testing Strategy*).
+
 ### Code Changes
 
 - **Files modified (Phase II):**
   - `test/Dialect/FSM/mutex-transition-repro.mlir` *(new — reproduction artifact)*
   - `READ_ME(1).md` *(this contribution write-up)*
-- **Planned files (Phase III):** `lib/Dialect/FSM/FSMOps.cpp`,
-  `test/Dialect/FSM/canonicalize.mlir`, and possibly
-  `lib/Dialect/FSM/CMakeLists.txt` (for a `CIRCTComb` link dependency).
-- **Key commits:** `66c8a29f0` — reproduction case for #3577.
-- **Approach decisions:** reuse the existing "make-guard-unconditional" rewrite
-  from `TransitionOp::canonicalize`; start with the narrowest provably-correct
+- **Files modified (Phase III):**
+  - `lib/Dialect/FSM/FSMOps.cpp` *(detection helpers + `StateOp::canonicalize`)*
+  - `lib/Dialect/FSM/CMakeLists.txt` *(`CIRCTComb` link dependency)*
+  - `test/Dialect/FSM/canonicalize.mlir` *(5 new test cases)*
+- **Key commits:**
+  - `66c8a29f0` — reproduction case for #3577 (Phase II).
+  - `0430c81ec` — `[FSM] Eliminate redundant complementary transition guards`
+    (implementation + CMake).
+  - `65d410f6f` — `[FSM] Add canonicalization tests for complementary guard
+    elimination`.
+  - All Phase III commits carry the `Assisted-by: Claude Code:claude-opus-4-8`
+    trailer required by `docs/AIToolPolicy.md`.
+- **Approach decisions:** reuse the existing canonicalization machinery and the
+  Comb dialect's `isBinaryNot` helper; start with the narrowest provably-correct
   case (exactly two complementary transitions) and broaden only with more tests.
 
 ---
 
 ## Pull Request
 
-**PR Link:** [GitHub PR URL when submitted]
+**PR Link:** _Not yet opened._ The branch is implemented and committed locally
+on [`fix-issue-3577`](https://github.com/arefinaa/circt/tree/fix-issue-3577);
+the PR will be opened once the change is confirmed green in CI (the local
+machine has no build toolchain — see *Manual Testing*).
 
-**PR Description:** [Draft or final PR description - much of the content above can be adapted]
+**PR Description (draft):**
+
+> **[FSM] Eliminate redundant complementary transition guards (#3577)**
+>
+> Implements the mutually exclusive transition elimination pattern from the FSM
+> tracking issue #3577. When a state has exactly two outgoing transitions whose
+> guards are logical complements, reaching the second transition already implies
+> the first guard was false, so the second guard is provably true and redundant.
+> `StateOp::canonicalize` now detects this and strips the second guard region,
+> collapsing it to an unconditional (default) transition.
+>
+> The complement is recognized in both forms CIRCT emits: the comb form
+> (`comb.xor %b, %true`, via `XorOp::isBinaryNot`) and the arith form
+> (`arith.xori %b, %true`). This adds a `CIRCTComb` link dependency to
+> `CIRCTFSM` (no cycle: Comb depends only on HW, which FSM already links).
+>
+> Scoped conservatively to the exactly-two-transition case to stay provably
+> correct and avoid the non-determinism that blocked the earlier
+> unreachable-states attempt (#3131). Adds positive (comb + arith) and negative
+> (non-complement, three-transition) lit tests in
+> `test/Dialect/FSM/canonicalize.mlir`.
+>
+> `Assisted-by: Claude Code:claude-opus-4-8` (per `docs/AIToolPolicy.md`).
 
 **Maintainer Feedback:**
-- [Date]: [Summary of feedback received]
-- [Date]: [How you addressed it]
+- _None yet — PR not opened._
 
-**Status:** [Awaiting review / Iterating / Approved / Merged]
+**Status:** Implemented locally; awaiting CI build + PR submission.
 
 ---
 
@@ -374,15 +449,55 @@ exact pattern is emitted by `CalyxToFSM` lowering (`lower-while.mlir`).
 
 ### Technical Skills Gained
 
-[What you learned technically]
+- **MLIR canonicalization model.** I learned how `*::canonicalize` hooks plug
+  into the greedy pattern-rewrite driver, why returning `success()` triggers a
+  re-run to a fixpoint, and how that fixpoint behavior both enables follow-on
+  cleanup (the always-taken pruning runs after my rewrite) and imposes a
+  termination obligation (the pattern must stop firing — here, because the guard
+  value becomes null once its region is erased).
+- **`PatternRewriter` discipline.** Using `rewriter.eraseBlock` to drop a whole
+  region in one tracked operation, rather than hand-erasing each inner op, and
+  understanding why that is safe (no guard-region value is used outside it).
+- **Reusing dialect-level helpers.** Finding that Comb already exposed
+  `XorOp::isBinaryNot()` for exactly the `xor x, allones` shape turned a fiddly
+  structural match into a one-liner — a reminder to read the target dialect
+  before writing a matcher from scratch.
+- **CMake layering in a multi-dialect project.** Reasoning about link
+  dependencies and dependency cycles (Comb → HW, FSM → HW/Seq) before adding
+  `CIRCTComb`, and weighing match-by-type vs match-by-name as a real tradeoff.
 
 ### Challenges Overcome
 
-[What was hard and how you solved it]
+- **No local build toolchain.** The hardest constraint was the inability to
+  compile or run `circt-opt` locally (a multi-hour LLVM+CIRCT build with tools
+  that aren't installed). I compensated with careful source-level reasoning:
+  tracing how the printer normalizes machine block arguments to `%arg0`/`%arg1`
+  and how the `guard` keyword is rendered, so the FileCheck lines would match
+  the *actual* canonicalized output rather than the source names. I deliberately
+  wrote name-agnostic checks (matching `comb.xor`, `arith.xori`, and normalized
+  arg names) to keep the tests robust.
+- **Getting the negative tests to actually test something.** The first instinct
+  for a negative case ("two unrelated guards") wouldn't have exercised the
+  operand check. I made the negative case a `comb.xor` of an *unrelated* value
+  (`!%b` while the sibling guard is `%a`), which specifically verifies the
+  `getOperand(0) == b` guard against over-eager rewriting.
+- **Choosing the cleanest rewrite.** The constant-guard canonicalizer leaves a
+  residual `guard { fsm.return }` region; erasing the whole block instead
+  produces the clean `fsm.transition @C` the issue describes.
 
 ### What I'd Do Differently Next Time
 
-[Reflection on your process]
+- **Provision the build first.** I'd stand up the toolchain (or a Linux/CI
+  build) before Phase III so I could iterate against a real `circt-opt` instead
+  of reasoning about printer output by hand — the single biggest source of risk
+  in this contribution.
+- **Generalize incrementally with tests as the ratchet.** The v1 scope is
+  intentionally narrow (exactly two transitions). Next I'd add the N-transition
+  generalization, but only one test-backed step at a time, mirroring LLVM's
+  incremental-development norm.
+- **Engage maintainers earlier** with the match-by-type vs match-by-name
+  dependency question, since that is the one design decision most likely to draw
+  review comments.
 
 ---
 
